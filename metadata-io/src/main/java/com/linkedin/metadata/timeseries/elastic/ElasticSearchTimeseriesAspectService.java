@@ -248,7 +248,7 @@ public class ElasticSearchTimeseriesAspectService
                 return indexBuilder.buildReindexState(
                     opContext,
                     indexConvention.getTimeseriesAspectIndexName(
-                        pair.getFirst().getName(), pair.getSecond().getName()),
+                        opContext, pair.getFirst().getName(), pair.getSecond().getName()),
                     MappingsBuilder.getMappings(pair.getSecond()),
                     Collections.<String, Object>emptyMap());
               } catch (IOException e) {
@@ -268,7 +268,8 @@ public class ElasticSearchTimeseriesAspectService
       @Nullable QueryBuilder filterQuery,
       BatchWriteOperationsOptions options)
       throws Exception {
-    Optional<Pair<String, String>> entityAndAspect = indexConvention.getEntityAndAspectName(index);
+    Optional<Pair<String, String>> entityAndAspect =
+        indexConvention.getEntityAndAspectName(opContext, index);
     if (entityAndAspect.isEmpty()) {
       throw new IllegalArgumentException("Could not extract entity and aspect from index " + index);
     }
@@ -324,7 +325,7 @@ public class ElasticSearchTimeseriesAspectService
         opContext
             .getSearchContext()
             .getIndexConvention()
-            .getTimeseriesAspectIndexName(entityName, aspectName);
+            .getTimeseriesAspectIndexName(opContext, entityName, aspectName);
     final UpdateRequest updateRequest =
         new UpdateRequest(indexName, docId)
             .detectNoop(false)
@@ -359,7 +360,10 @@ public class ElasticSearchTimeseriesAspectService
     List<TimeseriesIndexSizeResult> res = new ArrayList<>();
     try {
       String indicesPattern =
-          opContext.getSearchContext().getIndexConvention().getAllTimeseriesAspectIndicesPattern();
+          opContext
+              .getSearchContext()
+              .getIndexConvention()
+              .getAllTimeseriesAspectIndicesPattern(opContext);
       RawResponse r =
           searchClient.performLowLevelRequest(
               opContext, new Request("GET", "/" + indicesPattern + "/_stats"));
@@ -374,7 +378,7 @@ public class ElasticSearchTimeseriesAspectService
                     opContext
                         .getSearchContext()
                         .getIndexConvention()
-                        .getEntityAndAspectName(entry.getKey());
+                        .getEntityAndAspectName(opContext, entry.getKey());
                 if (indexEntityAndAspect.isPresent()) {
                   elemResult.setEntityName(indexEntityAndAspect.get().getFirst());
                   elemResult.setAspectName(indexEntityAndAspect.get().getSecond());
@@ -401,7 +405,7 @@ public class ElasticSearchTimeseriesAspectService
         opContext
             .getSearchContext()
             .getIndexConvention()
-            .getTimeseriesAspectIndexName(entityName, aspectName);
+            .getTimeseriesAspectIndexName(opContext, entityName, aspectName);
     final BoolQueryBuilder filterQueryBuilder =
         QueryBuilders.boolQuery()
             .must(
@@ -490,7 +494,7 @@ public class ElasticSearchTimeseriesAspectService
         opContext
             .getSearchContext()
             .getIndexConvention()
-            .getTimeseriesAspectIndexName(entityName, aspectName);
+            .getTimeseriesAspectIndexName(opContext, entityName, aspectName);
     searchRequest.indices(indexName);
 
     log.debug("Search request is: " + searchRequest);
@@ -565,7 +569,7 @@ public class ElasticSearchTimeseriesAspectService
         opContext
             .getSearchContext()
             .getIndexConvention()
-            .getTimeseriesAspectIndexName(entityName, aspectName);
+            .getTimeseriesAspectIndexName(opContext, entityName, aspectName);
 
     int batchSize = Math.max(1, timeseriesAspectServiceConfig.getTopHitsThreshold() / limit);
     List<String> urnStrings = urns.stream().map(Urn::toString).collect(Collectors.toList());
@@ -874,7 +878,7 @@ public class ElasticSearchTimeseriesAspectService
         opContext
             .getSearchContext()
             .getIndexConvention()
-            .getTimeseriesAspectIndexName(entityName, aspectName);
+            .getTimeseriesAspectIndexName(opContext, entityName, aspectName);
     final BoolQueryBuilder filterQueryBuilder =
         ESUtils.buildFilterQuery(
             filter,
@@ -916,7 +920,7 @@ public class ElasticSearchTimeseriesAspectService
         opContext
             .getSearchContext()
             .getIndexConvention()
-            .getTimeseriesAspectIndexName(entityName, aspectName);
+            .getTimeseriesAspectIndexName(opContext, entityName, aspectName);
     final BoolQueryBuilder filterQueryBuilder =
         ESUtils.buildFilterQuery(
             filter,
@@ -955,7 +959,7 @@ public class ElasticSearchTimeseriesAspectService
         opContext
             .getSearchContext()
             .getIndexConvention()
-            .getTimeseriesAspectIndexName(entityName, aspectName);
+            .getTimeseriesAspectIndexName(opContext, entityName, aspectName);
     final BoolQueryBuilder filterQueryBuilder =
         ESUtils.buildFilterQuery(
             filter,
@@ -1122,7 +1126,7 @@ public class ElasticSearchTimeseriesAspectService
                 opContext
                     .getSearchContext()
                     .getIndexConvention()
-                    .getTimeseriesAspectIndexName(entityName, aspectName);
+                    .getTimeseriesAspectIndexName(opContext, entityName, aspectName);
             searchRequest.indices(indexName);
 
             // Execute search
@@ -1190,7 +1194,7 @@ public class ElasticSearchTimeseriesAspectService
         opContext
             .getSearchContext()
             .getIndexConvention()
-            .getTimeseriesAspectIndexName(entityName, aspectName));
+            .getTimeseriesAspectIndexName(opContext, entityName, aspectName));
 
     return opContext.withSpan(
         "scrollAspects_search",
