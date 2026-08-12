@@ -69,7 +69,7 @@ class CatalogEntity(CatalogModel):
         }
 
     def duplicate_business_metadata_names(self) -> List[str]:
-        # Only names with multiple non-null values — null siblings do not overwrite.
+        # Only names with multiple non-null values; null siblings do not overwrite.
         counts = Counter(
             attribute.name
             for attribute in self.business_metadata
@@ -170,7 +170,7 @@ def index_by_name(
         name: candidates for name, candidates in grouped.items() if len(candidates) > 1
     }
 
-    # Distinct casings under one lowered key — including ambiguous exact-names —
+    # Distinct casings under one lowered key, including ambiguous exact-names,
     # so a unique sibling cannot win case-insensitive get() for a duplicate.
     exact_names_by_lowered: Dict[str, Set[str]] = defaultdict(set)
     for name in grouped:

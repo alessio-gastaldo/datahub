@@ -452,7 +452,7 @@ def get_topic(cluster_id, topic_name):
 @app.route("/catalog/graphql", methods=["POST"])
 @require_auth
 def catalog_graphql():
-    """cn_connector stand-in. Variables map → 500, like the live endpoint."""
+    """cn_connector stand-in. Variables map -> 500, like the live endpoint."""
     body = request.get_json(silent=True) or {}
     if "variables" in body:
         return jsonify({"error": "Internal server error"}), 500
