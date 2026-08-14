@@ -50,8 +50,6 @@ import org.springframework.context.annotation.Import;
 @ComponentScan(
     basePackages = {
       "com.linkedin.datahub.upgrade.sqlsetup.config",
-      "com.linkedin.gms.factory.entityregistry",
-      "com.linkedin.gms.factory.plugins",
       "com.linkedin.gms.factory.system_telemetry"
     },
     excludeFilters =
