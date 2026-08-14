@@ -1432,7 +1432,8 @@ public class LineageSearchServiceTest {
     // Scrolling always reads from the entity index, so answering either of these would mean
     // handing back a short result that reads as the whole answer
     assertThrows(
-        IllegalArgumentException.class, () -> scroll(new LineageFlags().setForceLightningMode(true)));
+        IllegalArgumentException.class,
+        () -> scroll(new LineageFlags().setForceLightningMode(true)));
     assertThrows(
         IllegalArgumentException.class,
         () -> scroll(new LineageFlags().setValidateSchemaFields(SchemaFieldValidationMode.AUTO)));
