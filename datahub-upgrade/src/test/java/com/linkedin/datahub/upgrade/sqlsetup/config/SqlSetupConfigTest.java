@@ -1,5 +1,6 @@
 package com.linkedin.datahub.upgrade.sqlsetup.config;
 
+import static org.mockito.Mockito.when;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertNotNull;
@@ -14,6 +15,8 @@ import com.linkedin.metadata.config.postgres.PostgresSqlSetupProperties;
 import com.linkedin.metadata.models.registry.EntityRegistry;
 import io.datahubproject.metadata.context.OperationContext;
 import io.ebean.Database;
+import io.ebean.config.DatabaseConfig;
+import io.ebean.datasource.DataSourceConfig;
 import java.lang.reflect.Field;
 import java.util.List;
 import org.mockito.Mock;
@@ -29,6 +32,7 @@ public class SqlSetupConfigTest {
 
   @Mock private EntityRegistry mockEntityRegistry;
   @Mock private Database mockDatabase;
+  @Mock private DatabaseConfig mockDatabaseConfig;
 
   private SqlSetupConfig sqlSetupConfig;
 
@@ -187,7 +191,8 @@ public class SqlSetupConfigTest {
             false, // createSchemaVersionIndex
             null);
 
-    SqlSetup sqlSetup = sqlSetupConfig.createInstance(mockDatabase, setupArgs);
+    when(mockDatabaseConfig.getDataSourceConfig()).thenReturn(new DataSourceConfig());
+    SqlSetup sqlSetup = sqlSetupConfig.createInstance(mockDatabase, setupArgs, mockDatabaseConfig);
 
     assertNotNull(sqlSetup);
     assertTrue(sqlSetup instanceof SqlSetup);

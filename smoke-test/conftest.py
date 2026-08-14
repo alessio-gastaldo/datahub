@@ -57,8 +57,7 @@ def build_auth_session():
 
     wait_for_healthcheck_util(requests)
     auth_session = TestSessionWrapper(get_frontend_session())
-    # Token is also published in TestSessionWrapper.__init__; keep this explicit
-    # so bootstrap waits below can authenticate messaging lag endpoints.
+    # Publish bootstrap admin token for bare wait_for_writes_to_sync() lag polls.
     os.environ["DATAHUB_GMS_TOKEN"] = auth_session.gms_token()
     wait_for_admin_corpuser_system_bootstrap(auth_session)
     return auth_session

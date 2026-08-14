@@ -12,6 +12,7 @@ import com.linkedin.metadata.utils.EnvironmentUtils;
 import io.datahubproject.metadata.context.OperationContext;
 import io.datahubproject.test.metadata.context.TestOperationContexts;
 import io.ebean.Database;
+import io.ebean.config.DatabaseConfig;
 import javax.annotation.Nonnull;
 import lombok.Getter;
 import lombok.Setter;
@@ -252,7 +253,9 @@ public class SqlSetupConfig {
   @ConditionalOnProperty(name = "entityService.impl", havingValue = "ebean", matchIfMissing = true)
   @Nonnull
   public SqlSetup createInstance(
-      final Database ebeanServer, @Qualifier("sqlSetupArgs") final SqlSetupArgs setupArgs) {
+      final Database ebeanServer,
+      @Qualifier("sqlSetupArgs") final SqlSetupArgs setupArgs,
+      @Qualifier("gmsEbeanDatabaseConfig") final DatabaseConfig serverConfig) {
     PostgresSqlSetupProperties pg = setupArgs.getPostgres();
     if (pg != null) {
       if (environment == null || !environment.containsProperty("postgres.schema")) {
@@ -263,7 +266,8 @@ public class SqlSetupConfig {
         pg.setKafkaConfiguration(configurationProvider.getKafka());
       }
     }
-    return new SqlSetup(ebeanServer, setupArgs);
+    return new SqlSetup(
+        ebeanServer, setupArgs, serverConfig != null ? serverConfig.getDataSourceConfig() : null);
   }
 
   @Bean(name = "sqlSetupCassandra")

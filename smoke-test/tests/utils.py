@@ -703,13 +703,9 @@ class TestSessionWrapper:
             self._frontend_url = get_frontend_url()
             self._gms_token_id, self._gms_token = self._generate_gms_token()
 
-        # Publish immediately so wait_for_writes_to_sync (and xdist workers' env
-        # reads) can authenticate messaging lag polls before conftest runs.
-        # Without this, lag endpoints return 401 and the wait falls back to a
-        # 1s sleep in CI — races under pgQueue (smoke:quickstartPg).
-        os.environ["DATAHUB_GMS_TOKEN"] = self._gms_token
-        if self._gms_url:
-            os.environ.setdefault("DATAHUB_GMS_URL", self._gms_url)
+        # Do not publish DATAHUB_GMS_TOKEN here — multi-user / PAT wrappers would
+        # overwrite the bootstrap admin token that bare wait_for_writes_to_sync()
+        # reads. Bootstrap publishes in smoke-test/conftest.py only.
 
     def __getattr__(self, name):
         # Intercept method calls
@@ -832,3 +828,6 @@ class TestSessionWrapper:
             response.raise_for_status()
             # Clear the token ID after successful revocation to prevent double-call issues
             self._gms_token_id = None
+            # Only clear process env if we still own the published bootstrap token.
+            if os.environ.get("DATAHUB_GMS_TOKEN") == self._gms_token:
+                os.environ.pop("DATAHUB_GMS_TOKEN", None)
