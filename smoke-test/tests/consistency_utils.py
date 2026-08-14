@@ -387,14 +387,24 @@ def wait_for_writes_to_sync(
 
         if not api_available:
             has_token = _get_gms_token() is not None
+            # CI sets ELASTICSEARCH_REFRESH_INTERVAL_SECONDS=1. That is fine as a
+            # post-lag ES refresh, but far too short when the lag API itself is
+            # unreachable (401 without a bearer token). pgQueue MCP/MCL drain
+            # routinely needs several seconds — use a floor so tests do not race.
+            fallback_sleep = (
+                ELASTICSEARCH_REFRESH_INTERVAL_SECONDS
+                if has_token or auth_session is not None
+                else max(ELASTICSEARCH_REFRESH_INTERVAL_SECONDS, 10)
+            )
             logger.warning(
-                "Messaging lag API unavailable (gms_url=%s, has_token=%s), "
-                "falling back to static sleep (%ds)",
+                "Messaging lag API unavailable (gms_url=%s, has_token=%s, "
+                "auth_session=%s), falling back to static sleep (%ds)",
                 gms_url,
                 has_token,
-                ELASTICSEARCH_REFRESH_INTERVAL_SECONDS,
+                auth_session is not None,
+                fallback_sleep,
             )
-            time.sleep(ELASTICSEARCH_REFRESH_INTERVAL_SECONDS)
+            time.sleep(fallback_sleep)
             return
 
         last_lag = lag

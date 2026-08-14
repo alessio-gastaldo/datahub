@@ -703,6 +703,14 @@ class TestSessionWrapper:
             self._frontend_url = get_frontend_url()
             self._gms_token_id, self._gms_token = self._generate_gms_token()
 
+        # Publish immediately so wait_for_writes_to_sync (and xdist workers' env
+        # reads) can authenticate messaging lag polls before conftest runs.
+        # Without this, lag endpoints return 401 and the wait falls back to a
+        # 1s sleep in CI — races under pgQueue (smoke:quickstartPg).
+        os.environ["DATAHUB_GMS_TOKEN"] = self._gms_token
+        if self._gms_url:
+            os.environ.setdefault("DATAHUB_GMS_URL", self._gms_url)
+
     def __getattr__(self, name):
         # Intercept method calls
         attr = getattr(self._upstream, name)
@@ -766,7 +774,9 @@ class TestSessionWrapper:
     def _wait(self, *args, **kwargs):
         if "/logIn" not in args[0]:
             logger.info("TestSessionWrapper sync wait.")
-            wait_for_writes_to_sync()
+            # Pass self so lag polls use the Bearer token even if DATAHUB_GMS_TOKEN
+            # was cleared from the process environment (e.g. CliRunner isolation).
+            wait_for_writes_to_sync(auth_session=self)
 
     @tenacity.retry(
         stop=tenacity.stop_after_attempt(10),
