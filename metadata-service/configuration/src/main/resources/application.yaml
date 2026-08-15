@@ -1811,6 +1811,8 @@ cache:
           dashboardUsageStatistics: 21600 # 6hrs
         telemetry:
           telemetryClientId: 86400 # 1 day
+        dataHubRetention:
+          dataHubRetentionConfig: 21600 # 6hrs
 
 graphQL:
   graphiql:
