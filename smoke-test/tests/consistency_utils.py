@@ -29,6 +29,20 @@ class _AuthenticatedSession(Protocol):
     def get(self, url: str, **kwargs: object) -> requests.Response: ...
 
 
+# Bootstrap admin PAT used for lag polls. Caller TestSessionWrappers often wrap
+# restricted users whose tokens 403 MANAGE_SYSTEM_OPERATIONS. Cached here so
+# Click CliRunner env isolation cannot drop DATAHUB_GMS_TOKEN mid-wait.
+_LAG_MONITOR_TOKEN: Optional[str] = None
+
+
+def register_lag_monitor_token(token: str) -> None:
+    """Pin the admin token used to poll messaging lag endpoints."""
+    if not token:
+        raise ValueError("lag monitor token must be a non-empty string")
+    global _LAG_MONITOR_TOKEN
+    _LAG_MONITOR_TOKEN = token
+
+
 def _get_gms_url() -> str:
     return env_vars.get_gms_url() or "http://localhost:8080"
 
@@ -37,12 +51,19 @@ def _get_gms_token() -> Optional[str]:
     return env_vars.get_gms_token()
 
 
+def _lag_monitor_token() -> str:
+    token = _LAG_MONITOR_TOKEN or _get_gms_token()
+    if not token:
+        raise RuntimeError(
+            "wait_for_writes_to_sync requires a bootstrap admin token "
+            "(DATAHUB_GMS_TOKEN / register_lag_monitor_token) with access to "
+            "messaging lag endpoints."
+        )
+    return token
+
+
 def _request_headers() -> dict:
-    headers: dict = {}
-    token = _get_gms_token()
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    return headers
+    return {"Authorization": f"Bearer {_lag_monitor_token()}"}
 
 
 def _fetch_lag_envelope(
@@ -50,12 +71,10 @@ def _fetch_lag_envelope(
     endpoint: str,
     auth_session: Optional[_AuthenticatedSession] = None,
 ) -> Optional[dict]:
+    del auth_session  # lag polls always use the bootstrap admin token
     url = f"{gms_url}{endpoint}?skipCache=true"
     try:
-        if auth_session is not None:
-            resp = auth_session.get(url, timeout=5)
-        else:
-            resp = requests.get(url, headers=_request_headers(), timeout=5)
+        resp = requests.get(url, headers=_request_headers(), timeout=5)
         resp.raise_for_status()
         return resp.json()
     except Exception as e:
@@ -122,12 +141,10 @@ def _endpoints_for_consumer_group(consumer_group: str) -> List[str]:
 def _get_messaging_transport(
     gms_url: str, auth_session: Optional[_AuthenticatedSession] = None
 ) -> Optional[str]:
+    del auth_session
     try:
         url = f"{gms_url}/openapi/operations/messaging/transport"
-        if auth_session is not None:
-            resp = auth_session.get(url, timeout=5)
-        else:
-            resp = requests.get(url, headers=_request_headers(), timeout=5)
+        resp = requests.get(url, headers=_request_headers(), timeout=5)
         resp.raise_for_status()
         return resp.json().get("transport")
     except Exception as e:
@@ -300,7 +317,9 @@ def wait_for_writes_to_sync(
             ``datahub-usage-event-consumer-job-client`` for audit-event indexing).
             Falls back to ``kafka-consumer-groups`` when the group is not exposed
             via the messaging lag API (Kafka usage-event consumer).
-        auth_session: Base authenticated test session used for GMS operations.
+        auth_session: Ignored. Lag polls always use the bootstrap admin token
+            registered via register_lag_monitor_token / DATAHUB_GMS_TOKEN.
+            Restricted-user TestSessionWrappers 403 MANAGE_SYSTEM_OPERATIONS.
         legacy_wait: If True, use the old aggregate consumer-group-lag polling.
             Defaults to False, which instead captures offset checkpoints and
             waits for the consumers to pass them -- immune to the "lag never
@@ -313,6 +332,12 @@ def wait_for_writes_to_sync(
     if env_vars.get_use_static_sleep():
         time.sleep(ELASTICSEARCH_REFRESH_INTERVAL_SECONDS)
         return
+
+    # Lag polls require a bootstrap admin token (restricted-user sessions 403).
+    # Missing auth is not replaced by a sleep; the ES refresh interval still
+    # runs after lag has been awaited (or the wait times out).
+    _lag_monitor_token()
+    del auth_session
 
     # CI sets this on retry attempts: a batch that failed once re-runs with the
     # more conservative wait, so a wait-related flake self-recovers.
@@ -332,7 +357,7 @@ def wait_for_writes_to_sync(
 
     # Usage events on Kafka are not exposed via trace readers; use broker CLI lag.
     if consumer_group == _USAGE_EVENT_CONSUMER_GROUP:
-        transport = _get_messaging_transport(gms_url, auth_session)
+        transport = _get_messaging_transport(gms_url)
         if transport == "kafka":
             _wait_for_kafka_consumer_group_lag(
                 consumer_group,
@@ -350,7 +375,6 @@ def wait_for_writes_to_sync(
         checkpoint_established = wait_for_offsets_to_be_consumed(
             consumers,
             max_timeout_in_sec=max_timeout_in_sec,
-            auth_session=auth_session,
         )
         if checkpoint_established:
             time.sleep(ELASTICSEARCH_REFRESH_INTERVAL_SECONDS)
@@ -365,7 +389,7 @@ def wait_for_writes_to_sync(
         time.sleep(1)
 
         lag, group_found, api_available = _get_consumer_lag(
-            gms_url, consumers, consumer_group, auth_session
+            gms_url, consumers, consumer_group
         )
         if (
             consumer_group
@@ -386,26 +410,11 @@ def wait_for_writes_to_sync(
             break
 
         if not api_available:
-            has_token = _get_gms_token() is not None
-            # CI sets ELASTICSEARCH_REFRESH_INTERVAL_SECONDS=1. That is fine as a
-            # post-lag ES refresh, but far too short when the lag API itself is
-            # unreachable (401 without a bearer token). pgQueue MCP/MCL drain
-            # routinely needs several seconds — use a floor so tests do not race.
-            fallback_sleep = (
-                ELASTICSEARCH_REFRESH_INTERVAL_SECONDS
-                if has_token or auth_session is not None
-                else max(ELASTICSEARCH_REFRESH_INTERVAL_SECONDS, 10)
-            )
-            logger.warning(
-                "Messaging lag API unavailable (gms_url=%s, has_token=%s, "
-                "auth_session=%s), falling back to static sleep (%ds)",
+            logger.debug(
+                "Messaging lag API unavailable this poll (gms_url=%s); retrying",
                 gms_url,
-                has_token,
-                auth_session is not None,
-                fallback_sleep,
             )
-            time.sleep(fallback_sleep)
-            return
+            continue
 
         last_lag = lag
         if lag == 0:
@@ -467,12 +476,10 @@ def _fetch_detailed_lag_envelope(
     endpoint: str,
     auth_session: Optional[_AuthenticatedSession] = None,
 ) -> Optional[dict]:
+    del auth_session
     url = f"{gms_url}{endpoint}?skipCache=true&detailed=true"
     try:
-        if auth_session is not None:
-            resp = auth_session.get(url, timeout=5)
-        else:
-            resp = requests.get(url, headers=_request_headers(), timeout=5)
+        resp = requests.get(url, headers=_request_headers(), timeout=5)
         resp.raise_for_status()
         return resp.json()
     except Exception as e:
@@ -609,7 +616,7 @@ def wait_for_offsets_to_be_consumed(
         poll_interval_sec: how often to re-check (much finer than the 1s
             granularity of wait_for_writes_to_sync's poll loop, since each
             check is now a ~20-50ms HTTP call rather than a ~1.4s CLI spawn).
-        auth_session: base authenticated test session used for GMS operations.
+        auth_session: Ignored; lag polls use the bootstrap admin token.
 
     Returns:
         True if checkpoints were established (whether or not every offset was
@@ -619,6 +626,7 @@ def wait_for_offsets_to_be_consumed(
         checkpoint, which would otherwise return near-instantly as if there
         were nothing to wait for.
     """
+    del auth_session
     start_time = time.time()
     deadline = start_time + max_timeout_in_sec
     gms_url = _get_gms_url()
@@ -632,14 +640,12 @@ def wait_for_offsets_to_be_consumed(
     for phase_consumers in (mcp_consumers, mcl_consumers):
         if not phase_consumers:
             continue
-        targets = _capture_offset_targets(gms_url, phase_consumers, auth_session)
+        targets = _capture_offset_targets(gms_url, phase_consumers)
         if targets is None:
             return False
         total_targets += len(targets)
         outstanding.update(
-            _await_offset_targets(
-                gms_url, targets, deadline, poll_interval_sec, auth_session
-            )
+            _await_offset_targets(gms_url, targets, deadline, poll_interval_sec)
         )
 
     elapsed = time.time() - start_time
