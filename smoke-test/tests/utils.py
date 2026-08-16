@@ -3,10 +3,11 @@ import json
 import logging
 import os
 import socket
+import time
 import uuid
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 from urllib.parse import quote, urlparse, urlunparse
 
 import click
@@ -481,6 +482,150 @@ def run_datahub_cmd(
     return runner.invoke(datahub, command, input=input, env=env)
 
 
+_SEARCH_URNS_QUERY = """
+query searchIngestedUrns($input: SearchAcrossEntitiesInput!) {
+  searchAcrossEntities(input: $input) {
+    searchResults {
+      entity {
+        urn
+      }
+    }
+  }
+}
+"""
+
+_BROWSE_ENTITIES_QUERY = """
+query browse($input: BrowseInput!) {
+  browse(input: $input) {
+    entities {
+      urn
+    }
+  }
+}
+"""
+
+
+def entity_urns_from_ingest_file(filename: str) -> List[str]:
+    """Unique entity URNs from a file ingest payload (MCP or snapshot JSON)."""
+    with open(filename) as f:
+        payload = json.load(f)
+    if not isinstance(payload, list):
+        payload = [payload]
+
+    urns: List[str] = []
+    seen: Set[str] = set()
+    for entry in payload:
+        if not isinstance(entry, dict):
+            continue
+        urn: Optional[str] = None
+        if entry.get("entityUrn"):
+            urn = entry["entityUrn"]
+        else:
+            snapshot_union = entry.get("proposedSnapshot")
+            if isinstance(snapshot_union, dict) and snapshot_union:
+                snapshot = next(iter(snapshot_union.values()))
+                if isinstance(snapshot, dict):
+                    urn = snapshot.get("urn")
+        if urn and urn not in seen:
+            seen.add(urn)
+            urns.append(urn)
+    return urns
+
+
+def _search_results_contain_urns(auth_session, urns: List[str]) -> Set[str]:
+    if not urns:
+        return set()
+    res_data = execute_graphql(
+        auth_session,
+        _SEARCH_URNS_QUERY,
+        {
+            "input": {
+                "query": "*",
+                "start": 0,
+                "count": max(len(urns), 1),
+                "orFilters": [
+                    {
+                        "and": [
+                            {
+                                "field": "urn",
+                                "values": urns,
+                                "condition": "EQUAL",
+                            }
+                        ]
+                    }
+                ],
+                "searchFlags": {"skipCache": True},
+            }
+        },
+        no_sync_wait=True,
+    )
+    results = (
+        res_data.get("data", {})
+        .get("searchAcrossEntities", {})
+        .get("searchResults", [])
+        or []
+    )
+    return {
+        result["entity"]["urn"]
+        for result in results
+        if result.get("entity") and result["entity"].get("urn")
+    }
+
+
+def wait_for_ingested_urns_searchable(auth_session, filename: str) -> None:
+    """Poll GraphQL search until ingested URNs are indexed (ASYNC_BATCH lag)."""
+    remaining: Set[str] = set(entity_urns_from_ingest_file(filename))
+    if not remaining:
+        return
+
+    sleep_sec, sleep_times = get_sleep_info()
+    for attempt in range(sleep_times):
+        found = _search_results_contain_urns(auth_session, sorted(remaining))
+        remaining -= found
+        if not remaining:
+            return
+        if attempt < sleep_times - 1:
+            time.sleep(sleep_sec)
+
+    raise AssertionError(
+        f"Entities not searchable after ingest of {filename}: {sorted(remaining)}"
+    )
+
+
+def wait_for_browse_path_entity(
+    auth_session,
+    path: List[str],
+    expected_urn: str,
+    entity_type: str = "DATASET",
+) -> None:
+    """Poll browse v1 until ``expected_urn`` appears at ``path``."""
+    sleep_sec, sleep_times = get_sleep_info()
+    for attempt in range(sleep_times):
+        res_data = execute_graphql(
+            auth_session,
+            _BROWSE_ENTITIES_QUERY,
+            {
+                "input": {
+                    "type": entity_type,
+                    "path": path,
+                    "start": 0,
+                    "count": 100,
+                }
+            },
+            no_sync_wait=True,
+        )
+        entities = res_data.get("data", {}).get("browse", {}).get("entities", []) or []
+        found = {entity.get("urn") for entity in entities}
+        if expected_urn in found:
+            return
+        if attempt < sleep_times - 1:
+            time.sleep(sleep_sec)
+
+    raise AssertionError(
+        f"Browse path {path} did not contain {expected_urn} after ingest"
+    )
+
+
 def ingest_file_via_rest(
     auth_session, filename: str, mode: str = "ASYNC_BATCH"
 ) -> Pipeline:
@@ -503,6 +648,7 @@ def ingest_file_via_rest(
     pipeline.run()
     pipeline.raise_from_status()
     wait_for_writes_to_sync()
+    wait_for_ingested_urns_searchable(auth_session, filename)
     return pipeline
 
 

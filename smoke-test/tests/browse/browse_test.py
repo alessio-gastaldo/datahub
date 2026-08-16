@@ -4,7 +4,7 @@ from typing import Any, Dict
 import pytest
 
 from conftest import _ingest_cleanup_data_impl
-from tests.utils import execute_graphql
+from tests.utils import execute_graphql, wait_for_browse_path_entity
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +43,13 @@ def test_get_browse_paths(auth_session, ingest_cleanup_data):
     # /prod -- There should be one entity
     # These are all read-only browse queries with no writes in between, so the
     # first two skip the sync wait -- only the final query's response needs one.
+    wait_for_browse_path_entity(
+        auth_session,
+        path=["prod"],
+        expected_urn=TEST_DATASET_3_URN,
+        entity_type="DATASET",
+    )
+
     variables: Dict[str, Any] = {
         "input": {"type": "DATASET", "path": ["prod"], "start": 0, "count": 100}
     }
