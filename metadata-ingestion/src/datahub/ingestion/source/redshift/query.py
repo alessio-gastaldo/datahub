@@ -580,14 +580,16 @@ class RedshiftProvisionedQuery(RedshiftCommonQuery):
                     query_txt AS (
                         SELECT
                             query,
-                            userid,
                             RTRIM(LISTAGG(RTRIM(text) || CASE WHEN LEN(RTRIM(text)) < {_PROVISIONED_SEGMENT_SIZE} THEN ' ' ELSE '' END, '')
                                 WITHIN GROUP (ORDER BY sequence)) AS querytxt
                         FROM STL_QUERYTEXT
                         WHERE sequence < {_QUERY_SEQUENCE_LIMIT}
                         -- Scope by query id: the query-text tables carry no timestamp.
                         AND query IN (SELECT query FROM target_tables)
-                        GROUP BY query, userid
+                        -- One row per query. Grouping by userid as well would emit a
+                        -- second row, and so duplicate every source row for that query,
+                        -- if STL_QUERYTEXT ever held two userids for one query id.
+                        GROUP BY query
                     )
                         select
                             distinct cluster,
